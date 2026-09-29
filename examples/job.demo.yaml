@@ -1,29 +1,30 @@
 version: 1
 name: "demo"
 description: "a demo job that contains all usage"
-depends: # 依赖的jobs
-  - job: "demo_job"  # 当前job文件目录下的demo_job.yaml
-  - job: "../another/demo_job2" # 引用当前job文件父目录下another目录的demo_job2yaml
-vars: # 定义变量, 不能定义secret
+depends: # dependent jobs
+  - job: "demo_job"  # demo_job.yaml in the same directory as this job file
+  - job: "../another/demo_job2" # reference demo_job2.yaml in the "another" directory next to this job file
+vars: # variable definitions; secrets cannot be defined here
   demo_var1: "asdfghjkl"
   demo_var2: 12345678
-targets:  # 定义action执行的目标主机
+targets:  # target hosts on which actions run
   debian:
     protocol: ssh
     host: 192.168.2.130
     user: arlen
     password: ${secret.debian_password}
     port: 22
-    ssh_key: ${secret.debian_ssh_key} # 可选的ssh验证方式
+    ssh_key: ${secret.debian_ssh_key} # optional ssh auth method
   ubuntu:
     protocol: ssh
     host: 192.168.2.130
     user: arlen
     password: ${secret.ubuntu_password}
     port: 22
-    ssh_key: ${secret.ubuntu_ssh_key} # 可选的ssh验证方式
-persistence: # 持久化存储，不定义则表示不持久化
+    ssh_key: ${secret.ubuntu_ssh_key} # optional ssh auth method
+persistence: # result persistence; omit to disable persistence
   - local: "./persistence/"
+    on_failure: false # optional; whether to persist finished results when the job fails, default true
   - mongodb:
       uri: "mongodb://localhost:27017/"
       database: "test"
@@ -31,15 +32,16 @@ persistence: # 持久化存储，不定义则表示不持久化
       username: "test"
       password: "test"
       ssl: false
-actions: # 顺序执行以下定义的action
-  - concurrency: # 并发执行以下定义的actions
+actions: # run the following actions sequentially
+  - concurrency: # run the following actions concurrently
       - action:
           name: "bash"
           params:
               command: "ls -la"
           targets:
             - debian
-          timeout: 10  # 默认单位为秒
+          timeout: 10  # unit is seconds
+          failed: skip
       - action:
           name: "bash"
           params:
@@ -47,6 +49,7 @@ actions: # 顺序执行以下定义的action
           targets:
             - ubuntu
           timeout: 10
+          failed: skip
           retry:
             times: 3
             interval: 5
@@ -54,6 +57,7 @@ actions: # 顺序执行以下定义的action
       name: "bash"
       params:
         command: "cat ~/.bashrc"
+      failed: skip
       targets:
         - debian
         - ubuntu
@@ -71,9 +75,11 @@ actions: # 顺序执行以下定义的action
       retry:
         times: 3
         interval: 5
+      failed: skip  # skip or exit when action exec failed
   - action:
       name: "bash"
       params:
         command: "echo \"demo_var1 is ${demo_var1}, demo_var2 is ${demo_var2}\""
       targets:
         - debian
+      failed: exit

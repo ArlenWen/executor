@@ -13,7 +13,7 @@
 - **多种目标协议**：支持 `ssh`（远程主机）与 `local`（本机）
 - **结果持久化**：支持本地 JSON 文件与 MongoDB 两种持久化目的地
 - **敏感数据管理**：使用对称加密存储密码、密钥等敏感数据，通过 `${secret.xxx}` 在 job 中引用
-- **重试机制**：action 失败（非零退出码/异常）时按配置重试，重试仍失败则终止当前 job，不影响后续 job
+- **重试机制**：action 失败（非零退出码/异常）时按配置重试；重试仍失败时按 `failed` 字段处理：`skip`（默认）跳过继续执行，`exit` 终止当前 job，不影响后续 job
 
 ## 环境要求
 
@@ -82,7 +82,7 @@ secret_file: ~/.executor/secret.bin  # 敏感数据存储文件
 | `depends` | 依赖的其他 job（相对当前文件路径，不带 `.yaml` 后缀），按依赖顺序先执行 |
 | `vars` | 变量定义，action 执行时通过 `${var_name}` 引用，不存在则报错 |
 | `targets` | action 执行的目标主机，`protocol` 支持 `ssh` 与 `local` |
-| `persistence` | 结果持久化目的地列表，支持 `local`（本地目录）与 `mongodb`，不定义则不持久化 |
+| `persistence` | 结果持久化目的地列表，支持 `local`（本地目录）与 `mongodb`，不定义则不持久化；每个目的地可设置 `on_failure`（布尔，默认 `true`），控制 job 执行失败时是否持久化已完成 action 的结果 |
 | `actions` | 顺序执行的 action 列表；`concurrency` 块内的 action 并发执行 |
 
 action 通用字段：
@@ -151,6 +151,6 @@ class myplugin(BaseAction):
 ## 执行约定
 
 - 非零退出码视为 action 执行失败，触发 retry
-- 某个 action 重试后仍失败则终止当前 job，但不影响后续其他 job 的执行
+- 某个 action 重试后仍失败时按 `failed` 字段处理：`skip`（默认）跳过该 action 继续执行 job；`exit` 终止当前 job，后续其他 job 不再执行。
 - `local` target 使用 `protocol: local`，在本机执行命令
 - 本地持久化文件命名：`<job_id>_<seq>_<action>.json`

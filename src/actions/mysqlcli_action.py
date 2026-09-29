@@ -1,4 +1,4 @@
-# mysqlcli 插件：执行 mysql 命令
+# mysqlcli plugin: execute mysql commands
 import datetime
 import decimal
 import logging
@@ -31,7 +31,7 @@ class mysqlcli(BaseAction):
     def format_before_exec(self):
         for key in ("command", "host", "user", "password"):
             if self.params.get(key) is None:
-                raise ValueError(f"mysqlcli action 缺少参数: {key}")
+                raise ValueError(f"mysqlcli action missing param: {key}")
 
     def exec(self) -> dict:
         conn_kwargs = {
@@ -46,7 +46,7 @@ class mysqlcli(BaseAction):
         }
         if self.params.get("ssl"):
             conn_kwargs["ssl"] = {"ssl": {}}
-        logger.info("连接 mysql %s:%s", conn_kwargs["host"], conn_kwargs["port"])
+        logger.info("connecting to mysql %s:%s", conn_kwargs["host"], conn_kwargs["port"])
         self._conn = pymysql.connect(**conn_kwargs)
         with self._conn.cursor() as cur:
             cur.execute(self.params["command"])

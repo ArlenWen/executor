@@ -1,4 +1,4 @@
-# bash 插件：通过 ssh（或 local）在目标主机上执行命令
+# bash plugin: execute commands on target hosts via ssh (or locally)
 import io
 import logging
 import subprocess
@@ -20,9 +20,9 @@ class bash(BaseAction):
 
     def format_before_exec(self):
         if not self.params.get("command"):
-            raise ValueError("bash action 缺少参数: command")
+            raise ValueError("bash action missing param: command")
         if not self.targets:
-            raise ValueError("bash action 缺少 targets")
+            raise ValueError("bash action missing targets")
 
     def _ssh_client(self, target: dict) -> paramiko.SSHClient:
         client = paramiko.SSHClient()
@@ -44,12 +44,12 @@ class bash(BaseAction):
                 except paramiko.SSHException:
                     continue
             if pkey is None:
-                raise ValueError("无法解析 ssh_key")
+                raise ValueError("failed to parse ssh_key")
             kwargs["pkey"] = pkey
         elif target.get("password"):
             kwargs["password"] = target["password"]
         else:
-            raise ValueError(f"target {target.get('host')} 缺少认证信息")
+            raise ValueError(f"target {target.get('host')} missing credentials")
         client.connect(**kwargs)
         self._clients.append(client)
         return client
@@ -83,18 +83,18 @@ class bash(BaseAction):
         for target in self.targets:
             name = target.get("_name") or target.get("host", "local")
             protocol = target.get("protocol", "ssh")
-            logger.info("[%s] 执行命令: %s", name, self.params["command"])
+            logger.info("[%s] executing command: %s", name, self.params["command"])
             if protocol == "local":
                 results[name] = self._exec_local()
             elif protocol == "ssh":
                 results[name] = self._exec_ssh(target)
             else:
-                raise ValueError(f"不支持的 protocol: {protocol}")
-            logger.info("[%s] 退出码: %s", name, results[name]["exit_code"])
+                raise ValueError(f"unsupported protocol: {protocol}")
+            logger.info("[%s] exit code: %s", name, results[name]["exit_code"])
         self.result = results
         failed = {n: r["exit_code"] for n, r in results.items() if r["exit_code"] != 0}
         if failed:
-            raise RuntimeError(f"命令执行失败，退出码: {failed}")
+            raise RuntimeError(f"command failed, exit codes: {failed}")
         return results
 
     def process_result(self) -> dict:

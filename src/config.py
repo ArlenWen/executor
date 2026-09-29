@@ -1,4 +1,4 @@
-# 加载 config.yaml，提供全局配置
+# Load config.yaml and provide global configuration
 import logging
 import logging.handlers
 import os
@@ -24,13 +24,13 @@ def get(key: str, default=None):
 
 
 def setup_logging(job_id: str = "executor") -> logging.Logger:
-    """根据 config.yaml 中的 log 配置初始化日志，返回 logger"""
+    """Initialize logging from the log section of config.yaml and return the logger"""
     cfg = load().get("log", {})
     level = getattr(logging, str(cfg.get("level", "info")).upper(), logging.INFO)
     logger = logging.getLogger("executor")
     logger.setLevel(level)
     logger.propagate = False
-    # 避免重复添加 handler
+    # Avoid adding duplicate handlers
     for h in list(logger.handlers):
         logger.removeHandler(h)
     fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")

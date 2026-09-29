@@ -1,4 +1,4 @@
-# 持久化：将 action 的 process_result 结果保存到对应目的地
+# Persistence: save the process_result output of each action to its destinations
 import datetime
 import json
 import logging
@@ -20,7 +20,7 @@ def _doc(job_id: str, job_name: str, seq: int, action_name: str, data: dict) -> 
 
 def persist(persistence: list, job_id: str, job_name: str, seq: int,
             action_name: str, data):
-    """按 job 定义的 persistence 列表持久化一条结果"""
+    """Persist one result according to the persistence list defined in the job"""
     if data is None:
         return
     if isinstance(data, dict):
@@ -35,9 +35,9 @@ def persist(persistence: list, job_id: str, job_name: str, seq: int,
             elif "mongodb" in dest:
                 _save_mongodb(dest["mongodb"], doc)
             else:
-                logger.warning("未知的 persistence 类型: %s", dest)
+                logger.warning("unknown persistence type: %s", dest)
         except Exception as e:
-            logger.error("持久化失败 (%s): %s", dest, e)
+            logger.error("persist failed (%s): %s", dest, e)
 
 
 def _save_local(directory: str, doc: dict):
@@ -46,7 +46,7 @@ def _save_local(directory: str, doc: dict):
     path = os.path.join(directory, filename)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(doc, f, ensure_ascii=False, indent=2, default=str)
-    logger.info("结果已保存到 %s", path)
+    logger.info("result saved to %s", path)
 
 
 def _save_mongodb(cfg: dict, doc: dict):
@@ -63,6 +63,6 @@ def _save_mongodb(cfg: dict, doc: dict):
         db = client[cfg.get("database", "executor")]
         collection = db[cfg.get("collection", "results")]
         collection.insert_one(dict(doc))
-        logger.info("结果已保存到 mongodb %s/%s", db.name, collection.name)
+        logger.info("result saved to mongodb %s/%s", db.name, collection.name)
     finally:
         client.close()

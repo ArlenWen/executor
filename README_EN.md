@@ -13,7 +13,7 @@ A YAML-orchestrated task executor: runs jobs in dependency order, executes actio
 - **Multiple target protocols**: `ssh` (remote hosts) and `local` (this machine)
 - **Result persistence**: persist results to local JSON files and/or MongoDB
 - **Secret management**: symmetrically encrypted storage for passwords and keys, referenced in jobs as `${secret.xxx}`
-- **Retry mechanism**: failed actions (non-zero exit code / exception) are retried per configuration; an action that still fails after retries terminates the current job without affecting subsequent jobs
+- **Retry mechanism**: failed actions (non-zero exit code / exception) are retried per configuration; an action that still fails after retries is handled per its `failed` field: `skip` (default) skips it and continues the job, `exit` terminates the current job without affecting subsequent jobs
 
 ## Requirements
 
@@ -82,7 +82,7 @@ See [examples/job.demo.yaml](examples/job.demo.yaml) for a complete example. A j
 | `depends` | Other jobs this job depends on (paths relative to the current file, without the `.yaml` suffix); dependencies run first |
 | `vars` | Variable definitions; referenced as `${var_name}` when an action runs. Missing variables raise an error |
 | `targets` | Target hosts for actions; `protocol` supports `ssh` and `local` |
-| `persistence` | List of persistence destinations; supports `local` (a directory) and `mongodb`. Results are not persisted if omitted |
+| `persistence` | List of persistence destinations; supports `local` (a directory) and `mongodb`. Results are not persisted if omitted. Each destination may set `on_failure` (boolean, default `true`) to control whether completed action results are persisted when the job fails |
 | `actions` | Actions executed sequentially; actions inside a `concurrency` block run in parallel |
 
 Common action fields:
@@ -151,6 +151,6 @@ Optionally override `format_before_exec()` (parameter validation / preparation) 
 ## Execution Conventions
 
 - A non-zero exit code marks an action as failed and triggers retry
-- An action that still fails after all retries terminates the current job, but does not affect subsequent jobs
+- An action that still fails after all retries is handled per its `failed` field: `skip` (default) skips it and continues the job; `exit` terminates the current job, subsequent jobs also do not execute. 
 - A `local` target uses `protocol: local` and runs commands on this machine
 - Local persistence files are named `<job_id>_<seq>_<action>.json`
