@@ -10,8 +10,10 @@
 - **依赖解析**：job 之间可声明 `depends`，自动按依赖顺序执行
 - **并发执行**：`concurrency` 块内的 action 使用线程池并发执行
 - **插件化 action**：内置 `bash`、`mysqlcli` 插件，支持在 `src/plugins/` 下按需扩展自定义插件
+- **build-in 内置操作**：在 actions 中插入无需插件的内置操作（`sleep`、`format`、`getter`），支持格式化字符串、从结果/变量提取值并保存到 `vars`
 - **多种目标协议**：支持 `ssh`（远程主机）与 `local`（本机）
 - **结果持久化**：支持本地 JSON 文件与 MongoDB 两种持久化目的地
+- **结果通知**：job 结束后将执行状态与最终结果通知到 email / webhook / kafka / rabbitmq
 - **敏感数据管理**：使用对称加密存储密码、密钥等敏感数据，通过 `${secret.xxx}` 在 job 中引用
 - **重试机制**：action 失败（非零退出码/异常）时按配置重试；重试仍失败时按 `failed` 字段处理：`skip`（默认）跳过继续执行，`exit` 终止当前 job，不影响后续 job
 
@@ -26,7 +28,7 @@
 uv sync
 ```
 
-依赖见 `pyproject.toml`：`pyyaml`、`paramiko`（SSH）、`pymysql`、`pymongo`、`cryptography`。
+依赖见 `pyproject.toml`：`pyyaml`、`paramiko`（SSH）、`pymysql`、`pymongo`、`cryptography`、`kafka-python`（Kafka）、`pika`（RabbitMQ）。
 
 ## 快速开始
 
@@ -83,7 +85,8 @@ secret_file: ~/.executor/secret.bin  # 敏感数据存储文件
 | `vars` | 变量定义，action 执行时通过 `${var_name}` 引用，不存在则报错 |
 | `targets` | action 执行的目标主机，`protocol` 支持 `ssh` 与 `local` |
 | `persistence` | 结果持久化目的地列表，支持 `local`（本地目录）与 `mongodb`，不定义则不持久化；每个目的地可设置 `on_failure`（布尔，默认 `true`），控制 job 执行失败时是否持久化已完成 action 的结果 |
-| `actions` | 顺序执行的 action 列表；`concurrency` 块内的 action 并发执行 |
+| `notify` | job 结束后的结果通知目标列表，支持 `email` / `webhook` / `kafka` / `rabbitmq`，不定义则不通知；每个目标可设置 `on_failure`（布尔，默认 `true`），控制 job 失败时是否通知 |
+| `actions` | 顺序执行的 action 列表；`concurrency` 块内的 action 并发执行，`build-in` 块执行内置操作（sleep / format / getter） |
 
 action 通用字段：
 
@@ -107,6 +110,75 @@ actions:
       params:
         command: "echo \"${demo_var1}\""
       targets: [debian, ubuntu]
+```
+
+### notify 结果通知
+
+`notify` 在 job 结束时（无论成功失败）将执行状态与最终结果通知到对应目标。通知内容为统一的 JSON payload：
+
+```json
+{
+  "job_id": "202610071200001234",
+  "job_name": "demo",
+  "status": "success",          // 或 failed
+  "error": null,                // 失败原因，成功时为 null
+  "finished_at": "2026-10-07T12:00:05",
+  "results": [                  // 已完成 action 的结果
+    {"seq": 1, "action": "bash", "data": {...}}
+  ]
+}
+```
+
+配置值支持 `${var}`、`${secret.xxx}` 引用，以及内置变量 `${status}`、`${job_id}`、`${job_name}`、`${error}`、`${result}`（payload 的 JSON 字符串）。单个目标通知失败只记日志，不影响 job 结果。
+
+```yaml
+notify:
+  - email:
+      to: ["ops@example.com"]   # 字符串或字符串列表
+      from: "executor@example.com"
+      subject: "job demo ${status}"
+      body: "job demo finished, result ${result}"
+      smtp_host: "smtp.example.com"  # 必填；smtp 配置只能定义在 job 中
+      # smtp_port: 465
+      # smtp_user: "executor@example.com"
+      # smtp_password: ${secret.smtp_password}
+      # smtp_ssl: true
+  - webhook:                    # POST 完整 payload（JSON）
+      url: "http://localhost:8080/webhook"
+      method: "post"            # 可选，默认 post
+      # headers:                # 可选
+      #   Authorization: "Bearer xxx"
+  - kafka:                      # 发送 payload 的 JSON 字符串
+      topic: "executor"
+      broker: "localhost:9092"  # 字符串或字符串列表
+  - rabbitmq:                   # 发送 payload 的 JSON 字符串到队列
+      queue: "executor"
+      # host: "localhost"       # 可选，默认 localhost
+      # port: 5672              # 可选，默认 5672
+      # username: "guest"       # 可选
+      # password: ${secret.rabbitmq_password}
+      # virtual_host: "/"       # 可选，默认 /
+    on_failure: false           # 可选；job 失败时是否通知，默认 true
+```
+
+### build-in 内置操作
+
+`build-in` 块内是一组顺序执行的内置操作，无需插件与目标主机，用于执行简单的本地操作。参数支持 `${var}`、`${secret.xxx}` 引用，以及内置上下文：`${time.now}`（当前时间）、`${vars.<name>}`（变量）、`${results.<action_name>...}`（已完成 action 的结果，点路径取值）：
+
+```yaml
+  - build-in:
+      - name: "sleep"       # 暂停指定秒数
+        params:
+          seconds: 5
+      - name: "format"      # 渲染 string 并保存到 vars
+        params:
+          string: "job finished at ${time.now}"
+          save_as: "finished_at_str"
+      - name: "getter"      # 从变量/结果中提取值并保存到 vars
+        params:
+          value_from: "${results.bash}"    # 或 ${vars.xxx} / ${secret.xxx}
+          value_getter: "results.local.stdout"  # dict 点路径；字符串则视为正则（有分组返回 group 1，否则返回整个匹配）；省略则不提取
+          save_as: "demo_save_as_var"
 ```
 
 ## 插件开发
@@ -139,10 +211,12 @@ class myplugin(BaseAction):
 └── src/
     ├── action.py      # BaseAction 基类与插件加载器
     ├── actions/       # 内置插件（bash、mysqlcli），优先于 plugins 加载
+    ├── builtin.py     # build-in 块的内置操作（sleep / format / getter）
     ├── plugins/       # 用户插件目录
     ├── job.py         # job 执行器
     ├── parse.py       # job YAML 解析与依赖排序
     ├── persist.py     # 结果持久化（local / mongodb）
+    ├── notify.py      # job 结束后的结果通知（email / webhook / kafka / rabbitmq）
     ├── secret.py      # 敏感数据加解密
     ├── config.py      # 配置加载与日志初始化
     └── util.py        # 变量渲染等工具

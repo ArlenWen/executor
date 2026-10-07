@@ -10,8 +10,10 @@ A YAML-orchestrated task executor: runs jobs in dependency order, executes actio
 - **Dependency resolution**: jobs can declare `depends` and are automatically executed in dependency order
 - **Concurrent execution**: actions inside a `concurrency` block run in parallel via a thread pool
 - **Pluggable actions**: built-in `bash` and `mysqlcli` plugins; extend with custom plugins under `src/plugins/`, loaded on demand
+- **build-in operations**: plugin-free builtin operations (`sleep`, `format`, `getter`) inside actions, supporting string formatting and extracting values from results/variables into `vars`
 - **Multiple target protocols**: `ssh` (remote hosts) and `local` (this machine)
 - **Result persistence**: persist results to local JSON files and/or MongoDB
+- **Result notification**: notify the execution status and final results to email / webhook / kafka / rabbitmq after a job finishes
 - **Secret management**: symmetrically encrypted storage for passwords and keys, referenced in jobs as `${secret.xxx}`
 - **Retry mechanism**: failed actions (non-zero exit code / exception) are retried per configuration; an action that still fails after retries is handled per its `failed` field: `skip` (default) skips it and continues the job, `exit` terminates the current job without affecting subsequent jobs
 
@@ -26,7 +28,7 @@ A YAML-orchestrated task executor: runs jobs in dependency order, executes actio
 uv sync
 ```
 
-Dependencies (see `pyproject.toml`): `pyyaml`, `paramiko` (SSH), `pymysql`, `pymongo`, `cryptography`.
+Dependencies (see `pyproject.toml`): `pyyaml`, `paramiko` (SSH), `pymysql`, `pymongo`, `cryptography`, `kafka-python` (Kafka), `pika` (RabbitMQ).
 
 ## Quick Start
 
@@ -83,7 +85,8 @@ See [examples/job.demo.yaml](examples/job.demo.yaml) for a complete example. A j
 | `vars` | Variable definitions; referenced as `${var_name}` when an action runs. Missing variables raise an error |
 | `targets` | Target hosts for actions; `protocol` supports `ssh` and `local` |
 | `persistence` | List of persistence destinations; supports `local` (a directory) and `mongodb`. Results are not persisted if omitted. Each destination may set `on_failure` (boolean, default `true`) to control whether completed action results are persisted when the job fails |
-| `actions` | Actions executed sequentially; actions inside a `concurrency` block run in parallel |
+| `notify` | List of notification targets for the job result; supports `email` / `webhook` / `kafka` / `rabbitmq`. No notification if omitted. Each target may set `on_failure` (boolean, default `true`) to control whether to notify when the job fails |
+| `actions` | Actions executed sequentially; actions inside a `concurrency` block run in parallel, a `build-in` block runs builtin operations (sleep / format / getter) |
 
 Common action fields:
 
@@ -107,6 +110,75 @@ actions:
       params:
         command: "echo \"${demo_var1}\""
       targets: [debian, ubuntu]
+```
+
+### notify Result Notification
+
+`notify` sends the execution status and final results to the configured targets when a job ends, whether it succeeds or fails. All targets receive the same JSON payload:
+
+```json
+{
+  "job_id": "202610071200001234",
+  "job_name": "demo",
+  "status": "success",          // or failed
+  "error": null,                // failure reason, null on success
+  "finished_at": "2026-10-07T12:00:05",
+  "results": [                  // results of finished actions
+    {"seq": 1, "action": "bash", "data": {...}}
+  ]
+}
+```
+
+Config values support `${var}` and `${secret.xxx}` references plus the built-in variables `${status}`, `${job_id}`, `${job_name}`, `${error}` and `${result}` (the payload as a JSON string). A failed notification is logged and does not affect the job result.
+
+```yaml
+notify:
+  - email:
+      to: ["ops@example.com"]   # a string or a list of strings
+      from: "executor@example.com"
+      subject: "job demo ${status}"
+      body: "job demo finished, result ${result}"
+      smtp_host: "smtp.example.com"  # required; smtp settings can only be defined in the job
+      # smtp_port: 465
+      # smtp_user: "executor@example.com"
+      # smtp_password: ${secret.smtp_password}
+      # smtp_ssl: true
+  - webhook:                    # POSTs the full payload (JSON)
+      url: "http://localhost:8080/webhook"
+      method: "post"            # optional; default post
+      # headers:                # optional
+      #   Authorization: "Bearer xxx"
+  - kafka:                      # sends the payload as a JSON string
+      topic: "executor"
+      broker: "localhost:9092"  # a string or a list of strings
+  - rabbitmq:                   # sends the payload as a JSON string to the queue
+      queue: "executor"
+      # host: "localhost"       # optional; default localhost
+      # port: 5672              # optional; default 5672
+      # username: "guest"       # optional
+      # password: ${secret.rabbitmq_password}
+      # virtual_host: "/"       # optional; default /
+    on_failure: false           # optional; whether to notify when the job fails, default true
+```
+
+### build-in Operations
+
+A `build-in` block is a group of builtin operations executed sequentially. They need no plugin and no target host, and are meant for simple local operations. Params support `${var}` and `${secret.xxx}` references plus the built-in context: `${time.now}` (current time), `${vars.<name>}` (variables) and `${results.<action_name>...}` (results of finished actions, accessed by dotted path):
+
+```yaml
+  - build-in:
+      - name: "sleep"       # Pause for the given seconds
+        params:
+          seconds: 5
+      - name: "format"      # Render string and save it into vars
+        params:
+          string: "job finished at ${time.now}"
+          save_as: "finished_at_str"
+      - name: "getter"      # Extract a value from variables/results into vars
+        params:
+          value_from: "${results.bash}"    # or ${vars.xxx} / ${secret.xxx}
+          value_getter: "results.local.stdout"  # dotted path for dicts; for strings it is treated as a regex (group 1 if present, else the whole match); omit to skip extraction
+          save_as: "demo_save_as_var"
 ```
 
 ## Plugin Development
@@ -139,10 +211,12 @@ Optionally override `format_before_exec()` (parameter validation / preparation) 
 └── src/
     ├── action.py      # BaseAction and the plugin loader
     ├── actions/       # Built-in plugins (bash, mysqlcli), loaded before plugins/
+    ├── builtin.py     # Builtin operations for build-in blocks (sleep / format / getter)
     ├── plugins/       # User plugin directory
     ├── job.py         # Job executor
     ├── parse.py       # Job YAML parsing and dependency ordering
     ├── persist.py     # Result persistence (local / mongodb)
+    ├── notify.py      # Result notification after a job finishes (email / webhook / kafka / rabbitmq)
     ├── secret.py      # Secret encryption/decryption
     ├── config.py      # Configuration loading and logging setup
     └── util.py        # Variable rendering and other utilities

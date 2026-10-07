@@ -32,6 +32,33 @@ persistence: # result persistence; omit to disable persistence
       username: "test"
       password: "test"
       ssl: false
+notify: # job result notification; omit to disable notification
+  - email:
+      to: ["<EMAIL>"]  # a string or a list of strings
+      from: "<EMAIL>"
+      subject: "job demo finished"
+      body: "job demo finished, result ${result}"  # supports ${var} / ${secret.xxx} / ${result} / ${status} / ${job_id} / ${job_name}
+      # smtp_* optional except smtp_host (required); all smtp config must be defined here in the job
+      smtp_host: "smtp.example.com"
+      smtp_port: 465
+      smtp_user: "<EMAIL>"
+      smtp_password: ${secret.smtp_password}
+      smtp_ssl: true
+  - webhook:
+      url: "http://localhost:8080/webhook"
+      method: "post" # optional; default post
+      # headers: # optional
+      #   Authorization: "Bearer xxx"
+  - kafka:
+      topic: "test"
+      broker: "localhost:9092" # a string or a list of strings
+  - rabbitmq:
+      queue: "executor"
+      # host: "localhost"       # optional; default localhost
+      # port: 5672              # optional; default 5672
+      # username: "guest"       # optional
+      # password: ${secret.rabbitmq_password}  # optional
+      # virtual_host: "/"       # optional; default /
 actions: # run the following actions sequentially
   - concurrency: # run the following actions concurrently
       - action:
@@ -76,6 +103,19 @@ actions: # run the following actions sequentially
         times: 3
         interval: 5
       failed: skip  # skip or exit when action exec failed
+  - build-in:
+      - name: "sleep"
+        params:
+          seconds: 5
+      - name: "format"
+        params:
+          string: "job finished at ${time.now}"
+          save_as: "finished_at_str"  # save into vars
+      - name: "getter"
+        params:
+          value_from: "${vars.finished_at_str}"
+          value_getter: "" # support a.b.c means dict['a']['b']['c'] or string regex
+          save_as: "demo_save_as_var"
   - action:
       name: "bash"
       params:

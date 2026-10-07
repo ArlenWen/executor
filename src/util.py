@@ -12,7 +12,13 @@ def _resolve(expr: str, vars_: dict):
         return secret.get_secret(expr[len("secret."):])
     if expr in vars_:
         return vars_[expr]
-    raise KeyError(f"variable not defined: {expr}")
+    # dotted path lookup: vars.xxx / time.now / results.action.field
+    value = vars_
+    for part in expr.split("."):
+        if not isinstance(value, dict) or part not in value:
+            raise KeyError(f"variable not defined: {expr}")
+        value = value[part]
+    return value
 
 
 def render(value, vars_: dict):
